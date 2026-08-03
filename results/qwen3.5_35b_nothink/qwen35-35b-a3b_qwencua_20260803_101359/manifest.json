@@ -1,0 +1,53 @@
+{
+  "benchmark": "osworld",
+  "config_file": "results/qwen3.5_35b_nothink/qwen35-35b-a3b_qwencua_20260803_101359/config.yaml",
+  "config_name": "qwen3.5_35b_nothink",
+  "config_sha256": "fa84e7ae885cadeea5d3f2e2e8233fd9de610113cbbf1f78f24177ae92b44e7f",
+  "expected_tasks": 361,
+  "finished_at": "2026-08-03T11:00:37Z",
+  "git": {
+    "harness_commit": "5836248f00b72d30f6e4f4fe5f1a2491564b2017",
+    "repo_commit": "bbc38290d6b47212bf1e03e4832a3f6e01b75686"
+  },
+  "inference": {
+    "enable_thinking": false,
+    "history_n": 50,
+    "image_max": 5,
+    "max_tokens": 2048,
+    "temperature": 0.6,
+    "top_k": 20,
+    "top_p": 0.95
+  },
+  "model": {
+    "id": "Qwen/Qwen3.5-35B-A3B",
+    "revision": "59d61f3ce65a6d9863b86d2e96597125219dc754",
+    "served_name": "qwen35-35b-a3b"
+  },
+  "path_base": "qwen-cua-harness repository root",
+  "raw_run_path": "../../osworld_eval/results/osworld-std/qwen35-35b-a3b_qwencua_20260803_101359",
+  "run_id": "qwen35-35b-a3b_qwencua_20260803_101359",
+  "schema_version": 1,
+  "serving": {
+    "api_server_count": 8,
+    "data_parallel_size": 8,
+    "disable_custom_all_reduce": true,
+    "dtype": "bfloat16",
+    "gpu_memory_utilization": 0.9,
+    "host": "127.0.0.1",
+    "max_model_len": 32768,
+    "max_num_seqs": 64,
+    "port": 8953,
+    "tensor_parallel_size": 1,
+    "trust_remote_code": true
+  },
+  "slurm": {
+    "exit_code": 0,
+    "job_id": 2689,
+    "node": "br-rtp-h200-tlv1-89"
+  },
+  "slurm_log_path": "../../logs/slurm_q35b-nothink_2689.out",
+  "source_args_path": "../../osworld_eval/results/osworld-std/qwen35-35b-a3b_qwencua_20260803_101359/claude_computer_use/screenshot/qwen35-35b-a3b/args.json",
+  "started_at": "2026-08-03T10:13:59Z",
+  "status": "completed",
+  "task_manifest_path": "../../osworld_eval/evaluation_examples/test_nogdrive.json"
+}

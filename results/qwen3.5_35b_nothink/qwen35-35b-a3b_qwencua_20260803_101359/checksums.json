@@ -1,0 +1,10 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "config.yaml": "fa84e7ae885cadeea5d3f2e2e8233fd9de610113cbbf1f78f24177ae92b44e7f",
+    "episodes.jsonl": "7f83b0fb70ff425f179f8b77b9c03a21f79f6cf6c542eb2b86de35f31acded8e",
+    "manifest.json": "4a5bccd071ed66c31b147e6bc486ebfb8d450b7946cf5351c13eb6d42c6f6b60",
+    "steps.jsonl": "3256a1ca8aa23281990da7fdca886485653f539aafca081597223ca819d25b2e",
+    "summary.json": "7c3ba2c00911269dbd2376e036d998d32ed51723b39b546558e1b3e815e8f2c9"
+  }
+}
