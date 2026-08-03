@@ -49,6 +49,9 @@ class Settings:
     default_max_turns: int
     history_n: int
     image_max: int
+    context_memory: bool
+    context_max_items: int
+    context_max_chars: int
     viewport_width: int
     viewport_height: int
     max_upload_bytes: int
@@ -91,6 +94,9 @@ class Settings:
             ),
             history_n=max(1, _env_int("QWEN_CUA_HISTORY_N", 50)),
             image_max=max(1, _env_int("QWEN_CUA_IMAGE_MAX", 20)),
+            context_memory=_env_bool("QWEN_CUA_CONTEXT_MEMORY", False),
+            context_max_items=max(1, _env_int("QWEN_CUA_CONTEXT_MAX_ITEMS", 8)),
+            context_max_chars=max(512, _env_int("QWEN_CUA_CONTEXT_MAX_CHARS", 6000)),
             viewport_width=max(640, _env_int("QWEN_CUA_VIEWPORT_WIDTH", 1920)),
             viewport_height=max(480, _env_int("QWEN_CUA_VIEWPORT_HEIGHT", 1080)),
             max_upload_bytes=max(

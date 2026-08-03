@@ -33,6 +33,9 @@ class QwenModelClient:
         model: str,
         messages: list[dict[str, Any]],
         on_progress: ModelProgressCallback | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         last_error: Exception | None = None
         for attempt in range(1, self.settings.model_retries + 1):
@@ -41,6 +44,9 @@ class QwenModelClient:
                     model=model,
                     messages=messages,
                     on_progress=on_progress,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format=response_format,
                 )
             except asyncio.CancelledError:
                 raise
@@ -63,22 +69,30 @@ class QwenModelClient:
         model: str,
         messages: list[dict[str, Any]],
         on_progress: ModelProgressCallback | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        response_format: dict[str, Any] | None,
     ) -> str:
         extra_body: dict[str, Any] = {"top_k": self.settings.top_k}
         if not self.settings.enable_thinking:
-            extra_body["enable_thinking"] = False
+            extra_body["chat_template_kwargs"] = {"enable_thinking": False}
 
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": self.settings.max_tokens if max_tokens is None else max_tokens,
+            "temperature": (
+                self.settings.temperature if temperature is None else temperature
+            ),
+            "top_p": self.settings.top_p,
+            "stream": True,
+            "extra_body": extra_body,
+        }
+        if response_format is not None:
+            request["response_format"] = response_format
         stream = cast(
             AsyncStream[ChatCompletionChunk],
-            await self.client.chat.completions.create(
-                model=model,
-                messages=messages,  # type: ignore[arg-type]
-                max_tokens=self.settings.max_tokens,
-                temperature=self.settings.temperature,
-                top_p=self.settings.top_p,
-                stream=True,
-                extra_body=extra_body,
-            ),
+            await self.client.chat.completions.create(**request),
         )
         reasoning_parts: list[str] = []
         content_parts: list[str] = []

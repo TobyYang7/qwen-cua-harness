@@ -159,6 +159,130 @@ def test_omitted_turns_are_summarised_not_lost():
     assert prompt.count("left_click") == 6
 
 
+def test_evolving_context_is_injected_and_task_local():
+    agent = _agent(context_memory=True)
+    _fake_turns(agent, 1)
+    agent.task_context.ensure_task("do the thing")
+    update = agent.task_context.apply_response(
+        (
+            '<context_update>{"status":"in_progress","completed":["opened app"],'
+            '"current_state":["dialog visible"],"facts":[],"failures":[],'
+            '"next_steps":["confirm"]}</context_update>'
+        ),
+        turn=1,
+    )
+    assert update.applied
+
+    messages = agent._build_messages("do the thing")
+    prompt = messages[1]["content"][0]["text"]
+
+    assert "task-local-memory" in prompt
+    assert "opened app" in prompt
+    assert "Evolving Task Context" in messages[0]["content"][0]["text"]
+
+    agent._build_messages("a different task")
+    assert agent.task_context.revision == 0
+    assert agent.task_context.snapshot.completed == []
+
+
+def test_context_only_response_gets_one_action_repair(monkeypatch):
+    agent = _agent(context_memory=True)
+    responses = iter(
+        [
+            (
+                '<context_update>{"status":"in_progress","completed":[],'
+                '"current_state":["blank screen"],"facts":[],"failures":[],'
+                '"next_steps":["wait"]}</context_update>'
+            ),
+            CASES["wait"],
+            (
+                '{"status":"in_progress","completed":[], '
+                '"current_state":["strict updater state"],"facts":[],'
+                '"failures":[],"next_steps":["wait"]}'
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        agent,
+        "_call_llm",
+        lambda _messages, **_kwargs: next(responses),
+    )
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (W, H), "white").save(buffer, format="PNG")
+
+    response, actions = agent.predict("wait for the app", {"screenshot": buffer.getvalue()})
+
+    assert actions == ["WAIT"]
+    assert agent.repairs == 1
+    assert "context_update" in response
+    assert "computer_use" in response
+    assert agent.task_context.revision == 1
+    assert agent.task_context.snapshot.current_state == ["strict updater state"]
+    assert agent.context_policy_updates_ignored == 1
+
+
+def test_action_without_context_gets_snapshot_repair(monkeypatch):
+    agent = _agent(context_memory=True)
+    repaired = (
+        '{"status":"in_progress","completed":[],'
+        '"current_state":["loading"],"facts":[],"failures":[],'
+        '"next_steps":["wait"]}'
+    )
+    responses = iter([CASES["wait"], repaired])
+    calls = []
+
+    def fake_call(_messages, **kwargs):
+        calls.append(kwargs)
+        return next(responses)
+
+    monkeypatch.setattr(
+        agent,
+        "_call_llm",
+        fake_call,
+    )
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (W, H), "white").save(buffer, format="PNG")
+
+    _response, actions = agent.predict(
+        "wait for the app",
+        {"screenshot": buffer.getvalue()},
+    )
+
+    assert actions == ["WAIT"]
+    assert agent.context_repairs == 1
+    assert agent.context_repair_failures == 0
+    assert agent.task_context.revision == 1
+    assert calls[1]["temperature"] == 0.0
+    assert calls[1]["max_tokens"] == agent.max_tokens
+    assert calls[1]["response_format"]["type"] == "json_schema"
+
+
+def test_context_diagnostics_are_exported_per_task():
+    agent = _agent(context_memory=True)
+    agent.context_repairs = 3
+    agent.context_repair_failures = 1
+    agent.repairs = 2
+    agent.parse_failures = 1
+    agent.no_tool_call_finishes = 4
+
+    assert agent.export_context_diagnostics() == {
+        "context_repairs": 3,
+        "context_repair_failures": 1,
+        "context_policy_updates_ignored": 0,
+        "action_repairs": 2,
+        "parse_failures": 1,
+        "no_tool_call_finishes": 4,
+    }
+
+
 def test_desktop_surface_swaps_every_browser_mention():
     browser = _agent(surface="browser")._system_prompt()
     desktop = _agent(surface="desktop")._system_prompt()

@@ -293,6 +293,13 @@ def config() -> argparse.Namespace:
             "gets a collapsed-screenshot placeholder, so this is a text budget."
         ),
     )
+    parser.add_argument(
+        "--context_memory",
+        action="store_true",
+        help="Enable task-local evolving context managed by the meta context skill.",
+    )
+    parser.add_argument("--context_max_items", type=int, default=8)
+    parser.add_argument("--context_max_chars", type=int, default=6000)
     parser.add_argument("--history_n", type=int, default=5, help="Number of history steps to replay (qwen35_xml agent)")
     parser.add_argument("--enable_thinking", action="store_true", default=False, help="Enable thinking mode (qwen35_xml agent; default off)")
     parser.add_argument(
@@ -438,6 +445,9 @@ def _worker_run(task):
                 history_n=args.qwencua_history_n,
                 image_max=args.only_n_most_recent_images,
                 surface="desktop",
+                context_memory=args.context_memory,
+                context_max_items=args.context_max_items,
+                context_max_chars=args.context_max_chars,
             )
             agent.relative_coordinate = False
         else:
@@ -482,6 +492,26 @@ def _worker_run(task):
                     pass
             _write_failure_result(example_result_dir, f"Exception in {domain}/{example_id}: {str(e)}")
         finally:
+            export_context = getattr(agent, "export_context", None)
+            if callable(export_context):
+                try:
+                    context_record = {"context_memory": export_context()}
+                    export_diagnostics = getattr(agent, "export_context_diagnostics", None)
+                    if callable(export_diagnostics):
+                        context_record["diagnostics"] = export_diagnostics()
+                    with open(
+                        os.path.join(example_result_dir, "context.json"),
+                        "w",
+                        encoding="utf-8",
+                    ) as context_file:
+                        json.dump(context_record, context_file, ensure_ascii=False, indent=2)
+                except Exception as context_exc:
+                    logger.warning(
+                        "[qwencua] failed to export context for %s/%s: %s",
+                        domain,
+                        example_id,
+                        context_exc,
+                    )
             try:
                 env.close()
             except Exception:

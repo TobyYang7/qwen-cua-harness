@@ -150,9 +150,15 @@ def _osworld_command(
         str(inference["history_n"]),
         "--only_n_most_recent_images",
         str(inference["image_max"]),
+        "--context_max_items",
+        str(inference["context_max_items"]),
+        "--context_max_chars",
+        str(inference["context_max_chars"]),
     ]
     if bool(inference["enable_thinking"]):
         command.append("--enable_thinking")
+    if bool(inference["context_memory"]):
+        command.append("--context_memory")
     if args.path_to_vm:
         command.extend(
             [
@@ -216,9 +222,15 @@ def _cuagym_command(
         str(inference["history_n"]),
         "--max_recent_images",
         str(inference["image_max"]),
+        "--context_max_items",
+        str(inference["context_max_items"]),
+        "--context_max_chars",
+        str(inference["context_max_chars"]),
     ]
     if bool(inference["enable_thinking"]):
         command.append("--enable_thinking")
+    if bool(inference["context_memory"]):
+        command.append("--context_memory")
     if args.limit is not None:
         command.extend(["--limit", str(args.limit)])
     return command
@@ -234,7 +246,14 @@ def main() -> int:
     profile = load_profile(config.resolve())
     model, inference = _profile_args(profile)
     if args.python:
-        python: str | Path = os.path.relpath(args.python.resolve(), eval_root)
+        # Keep a virtualenv's python symlink intact. Path.resolve() follows it
+        # to /usr/bin/python and silently drops the environment's dependencies.
+        python_path = (
+            args.python
+            if args.python.is_absolute()
+            else Path.cwd() / args.python
+        )
+        python: str | Path = os.path.relpath(python_path.absolute(), eval_root)
     elif (eval_root / ".venv/bin/python").exists():
         python = Path(".venv/bin/python")
     else:

@@ -115,6 +115,13 @@ def parse_args() -> argparse.Namespace:
             "is a text budget, not an image budget."
         ),
     )
+    p.add_argument(
+        "--context_memory",
+        action="store_true",
+        help="Enable task-local evolving context managed by the meta context skill.",
+    )
+    p.add_argument("--context_max_items", type=int, default=8)
+    p.add_argument("--context_max_chars", type=int, default=6000)
     p.add_argument("--limit", type=int, default=None, help="Only run the first N tasks (smoke).")
     p.add_argument("--browser_pool", type=int, default=None, help="Override CUA_BROWSER_POOL.")
     args = p.parse_args()
@@ -263,6 +270,7 @@ async def run_episode(
     result["_trajectory"] = trajectory
 
     env: Any = None
+    spec: Any = None
     try:
         spec = build_agent(args.agent_type, args)
         spec.reset(logger)
@@ -456,6 +464,32 @@ async def run_episode(
         logger.warning("episode %s crashed: %s\n%s", task_id, e, traceback.format_exc())
         return result
     finally:
+        if spec is not None:
+            export_context = getattr(spec.agent, "export_context", None)
+            if callable(export_context):
+                try:
+                    context_state = export_context()
+                    if context_state is not None:
+                        result["context_memory"] = context_state
+                        trajectory["context_memory"] = context_state
+                except Exception as export_exc:  # noqa: BLE001
+                    logger.warning("context export failed for %s: %s", task_id, export_exc)
+            export_diagnostics = getattr(
+                spec.agent,
+                "export_context_diagnostics",
+                None,
+            )
+            if callable(export_diagnostics):
+                try:
+                    context_diagnostics = export_diagnostics()
+                    result["context_diagnostics"] = context_diagnostics
+                    trajectory["context_diagnostics"] = context_diagnostics
+                except Exception as export_exc:  # noqa: BLE001
+                    logger.warning(
+                        "context diagnostics export failed for %s: %s",
+                        task_id,
+                        export_exc,
+                    )
         trajectory["correct"] = bool(result.get("success", False))
         trajectory["score"] = float(result.get("score", 0.0) or 0.0)
         trajectory["error"] = result.get("error")

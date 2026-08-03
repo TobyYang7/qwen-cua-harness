@@ -18,6 +18,9 @@ INFERENCE_KEYS = {
     "max_tokens",
     "history_n",
     "image_max",
+    "context_memory",
+    "context_max_items",
+    "context_max_chars",
 }
 SERVING_KEYS = {
     "host",
@@ -120,6 +123,13 @@ def load_profile(path: Path) -> dict[str, Any]:
     _require_int(inference["top_k"], "inference.top_k", minimum=0)
     for key in ("max_tokens", "history_n", "image_max"):
         _require_int(inference[key], f"inference.{key}")
+    _require_bool(inference["context_memory"], "inference.context_memory")
+    _require_int(inference["context_max_items"], "inference.context_max_items")
+    _require_int(
+        inference["context_max_chars"],
+        "inference.context_max_chars",
+        minimum=512,
+    )
 
     for key in ("host", "dtype"):
         _require_string(serving[key], f"serving.{key}")

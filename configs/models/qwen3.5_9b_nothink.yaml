@@ -13,6 +13,9 @@ inference:
   max_tokens: 2048
   history_n: 50
   image_max: 5
+  context_memory: true
+  context_max_items: 8
+  context_max_chars: 6000
 
 serving:
   host: 127.0.0.1

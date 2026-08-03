@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
@@ -25,8 +26,10 @@ from qwen_cua.runner import RunnerManager
 class FakeModelClient:
     def __init__(self, responses: list[str]):
         self.responses = responses
+        self.calls: list[dict[str, Any]] = []
 
-    async def generate(self, **_: Any) -> str:
+    async def generate(self, **kwargs: Any) -> str:
+        self.calls.append(kwargs)
         return self.responses.pop(0)
 
     async def close(self) -> None:
@@ -208,4 +211,71 @@ async def test_sensitive_custom_url_action_waits_for_approval(tmp_path: Path) ->
     assert final.summary is not None
     assert final.summary.outcome is RunOutcome.UNVERIFIED
     assert FakeComputer.instances[-1].executed[0].action == "type"
+    await manager.close()
+
+
+async def test_local_runner_uses_strict_task_context_controller(tmp_path: Path) -> None:
+    legacy = (
+        '<context_update>{"status":"in_progress","completed":[],'
+        '"current_state":["legacy policy state"],"facts":[],"failures":[],'
+        '"next_steps":[]}</context_update>'
+    )
+    wait_action = (
+        "<tool_call><function=computer_use>"
+        "<parameter=action>wait</parameter>"
+        "</function></tool_call>"
+    )
+    terminate_action = (
+        "<tool_call><function=computer_use>"
+        "<parameter=action>terminate</parameter>"
+        "<parameter=status>success</parameter>"
+        "</function></tool_call>"
+    )
+    strict_first = (
+        '{"status":"in_progress","completed":[],'
+        '"current_state":["strict controller state"],"facts":[],"failures":[],'
+        '"next_steps":["finish"]}'
+    )
+    strict_final = (
+        '{"status":"completed","completed":["finished"],'
+        '"current_state":[],"facts":[],"failures":[],"next_steps":[]}'
+    )
+    model = FakeModelClient(
+        [f"{legacy}\n{wait_action}", strict_first, terminate_action, strict_final]
+    )
+    configured = replace(settings(tmp_path), context_memory=True)
+    manager = RunnerManager(
+        configured,
+        model_client=model,  # type: ignore[arg-type]
+        computer_factory=FakeComputer,
+    )
+    started = await manager.start_run(
+        StartRunRequest(
+            prompt="Wait, then finish.",
+            target_url="http://127.0.0.1:8000",
+            custom_url_risk_acknowledged=True,
+            model="test-model",
+        )
+    )
+
+    await wait_for_status(manager, started.run_id, RunStatus.COMPLETED)
+
+    context_path = (
+        tmp_path / "data" / "runs" / started.run_id / "context" / "state.json"
+    )
+    for _ in range(100):
+        if context_path.is_file():
+            break
+        await asyncio.sleep(0.01)
+    assert context_path.is_file()
+    exported = json.loads(context_path.read_text(encoding="utf-8"))
+    assert exported["revision"] == 2
+    assert exported["snapshot"]["completed"] == ["finished"]
+    assert "legacy policy state" not in context_path.read_text(encoding="utf-8")
+    assert model.calls[1]["response_format"]["type"] == "json_schema"
+    assert model.calls[3]["response_format"]["type"] == "json_schema"
+    detail = await manager.get_run(started.run_id)
+    events = await manager.get_events(started.run_id)
+    assert detail.summary is not None
+    assert any(event.type == "context_policy_update_ignored" for event in events)
     await manager.close()

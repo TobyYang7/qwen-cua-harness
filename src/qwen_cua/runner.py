@@ -23,6 +23,12 @@ from .actions import (
 )
 from .computer import BrowserComputer, Screenshot
 from .config import Settings
+from .context import (
+    EvolvingTaskContext,
+    context_update_from_json,
+    has_context_update,
+    strip_context_update,
+)
 from .model_client import QwenModelClient
 from .models import (
     ApprovalRequest,
@@ -45,7 +51,10 @@ from .models import (
 from .protocol import (
     COLLAPSED_SCREENSHOT_TEXT,
     ToolCallParseError,
+    build_context_update_messages,
     build_system_prompt,
+    context_action_repair_instruction,
+    context_response_format,
     parse_tool_calls,
     redact_tool_text,
     repair_instruction,
@@ -75,6 +84,7 @@ class AgentHistory:
     responses: list[str] = field(default_factory=list)
     action_summaries: list[str] = field(default_factory=list)
     feedback: dict[int, str] = field(default_factory=dict)
+    context_memory: EvolvingTaskContext | None = None
 
     def add_screenshot(self, payload: bytes, feedback: str = "") -> None:
         self.screenshots.append(_process_image(payload))
@@ -91,6 +101,8 @@ class AgentHistory:
         )
 
     def build_messages(self) -> list[dict[str, Any]]:
+        if self.context_memory is not None:
+            self.context_memory.ensure_task(self.prompt)
         total = len(self.screenshots)
         start = max(0, total - self.history_n)
         collapsed_before = max(0, total - self.image_max)
@@ -102,10 +114,19 @@ class AgentHistory:
             "Previous actions from omitted turns:\n"
             f"{chr(10).join(earlier_actions) if earlier_actions else 'None'}"
         )
+        if self.context_memory is not None:
+            prompt += f"\n\n{self.context_memory.render_for_prompt()}"
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
-                "content": [{"type": "text", "text": build_system_prompt()}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": build_system_prompt(
+                            context_memory=self.context_memory is not None,
+                        ),
+                    }
+                ],
             }
         ]
         for index in range(start, total):
@@ -156,6 +177,7 @@ class RunContext:
     pending_element_ref: str | None = None
     action_count: int = 0
     turn_count: int = 0
+    context_memory: EvolvingTaskContext | None = None
 
 
 class RunnerManager:
@@ -371,10 +393,20 @@ class RunnerManager:
         return path
 
     async def _execute(self, context: RunContext) -> None:
+        context_memory = (
+            EvolvingTaskContext(
+                max_items=self.settings.context_max_items,
+                max_chars=self.settings.context_max_chars,
+            )
+            if self.settings.context_memory
+            else None
+        )
+        context.context_memory = context_memory
         history = AgentHistory(
             prompt=context.detail.prompt,
             history_n=self.settings.history_n,
             image_max=self.settings.image_max,
+            context_memory=context_memory,
         )
         trusted_scenario = context.detail.scenario_id is not None
         computer = self.computer_factory(
@@ -442,6 +474,97 @@ class RunnerManager:
                     )
                     actions = parse_tool_calls(response)
 
+                if (
+                    not actions
+                    and context_memory is not None
+                    and has_context_update(response)
+                ):
+                    context_response = response
+                    repair_messages = [
+                        *messages,
+                        {"role": "assistant", "content": context_response},
+                        {"role": "user", "content": context_action_repair_instruction()},
+                    ]
+                    await self._emit(
+                        context,
+                        type_="context_action_repair",
+                        level=EventLevel.WARN,
+                        message="Context update had no action; requesting one repair.",
+                    )
+                    repaired_response = await self.model_client.generate(
+                        model=context.detail.model,
+                        messages=repair_messages,
+                        temperature=0.0,
+                    )
+                    actions = parse_tool_calls(repaired_response)
+                    response = f"{context_response}\n{repaired_response}"
+
+                if context_memory is not None:
+                    if has_context_update(response):
+                        await self._emit(
+                            context,
+                            type_="context_policy_update_ignored",
+                            level=EventLevel.WARN,
+                            message=(
+                                "Ignored context emitted by the action policy; the strict "
+                                "controller remains authoritative."
+                            ),
+                        )
+
+                    if actions:
+                        await self._emit(
+                            context,
+                            type_="context_update_started",
+                            level=EventLevel.PENDING,
+                            message="Updating task context with the structured controller.",
+                        )
+                        try:
+                            action_response = strip_context_update(response)
+                            structured_context = await self.model_client.generate(
+                                model=context.detail.model,
+                                messages=build_context_update_messages(
+                                    messages,
+                                    action_response,
+                                ),
+                                temperature=0.0,
+                                max_tokens=self.settings.max_tokens,
+                                response_format=context_response_format(
+                                    max_items=context_memory.max_items,
+                                    max_item_chars=(
+                                        context_memory.max_snapshot_item_chars
+                                    ),
+                                ),
+                            )
+                            context_response = context_update_from_json(structured_context)
+                            candidate = f"{context_response}\n{action_response}"
+                            update = context_memory.apply_response(candidate, turn=turn)
+                        except Exception as exc:  # noqa: BLE001
+                            update = None
+                            await self._emit(
+                                context,
+                                type_="context_update_rejected",
+                                level=EventLevel.WARN,
+                                message="Structured context update failed; action continues.",
+                                detail=str(exc),
+                            )
+                        if update is not None and update.applied:
+                            response = candidate
+                            await self._emit(
+                                context,
+                                type_="context_updated",
+                                level=EventLevel.OK,
+                                message=(
+                                    "Structured task context updated to revision "
+                                    f"{context_memory.revision}."
+                                ),
+                                detail=context_memory.export(),
+                            )
+                    context_memory.record_actions(
+                        [
+                            action_to_public_dict(action, redact_text=True)
+                            for action in actions
+                        ]
+                    )
                 await self._emit(
                     context,
                     type_="model_response",
@@ -449,7 +572,7 @@ class RunnerManager:
                     message="Model response received.",
                     detail=redact_tool_text(response),
                 )
-                history.add_response(response, actions)
+                history.add_response(strip_context_update(response), actions)
                 if not actions:
                     await self._complete_from_current_state(
                         context,
@@ -797,7 +920,7 @@ class RunnerManager:
             ensure_ascii=False,
             indent=2,
         )
-        await asyncio.gather(
+        writes = [
             asyncio.to_thread(
                 (context.run_dir / "run.json").write_text,
                 detail_json,
@@ -813,13 +936,29 @@ class RunnerManager:
                 replay_text,
                 encoding="utf-8",
             ),
-        )
+        ]
+        if context.context_memory is not None:
+            context_dir = context.run_dir / "context"
+            context_dir.mkdir(parents=True, exist_ok=True)
+            writes.append(
+                asyncio.to_thread(
+                    (context_dir / "state.json").write_text,
+                    json.dumps(context.context_memory.export(), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            )
+        await asyncio.gather(*writes)
 
     def _replay_payload(self, context: RunContext) -> dict[str, Any]:
         return {
             "version": 1,
             "run": context.detail.model_dump(mode="json"),
             "events": [event.model_dump(mode="json") for event in context.events],
+            "context_memory": (
+                context.context_memory.export()
+                if context.context_memory is not None
+                else None
+            ),
             "artifacts": {
                 "screenshots": [
                     screenshot.model_dump(mode="json") for screenshot in context.detail.screenshots

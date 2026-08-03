@@ -25,7 +25,7 @@ Qwen3.5 computer-use 的独立 harness，包含：
 每个 profile 只保留三类信息：
 
 - `model`：Hugging Face 模型 ID、固定 revision、served name；
-- `inference`：agent 请求使用的采样、文本历史和图像预算；
+- `inference`：agent 请求使用的采样、文本历史、图像预算和 task-local Context 配置；
 - `serving`：vLLM 启动参数。
 
 历史 run ID、Slurm job ID、某次补跑并发数等运行记录不属于部署配置，不再放进
@@ -173,6 +173,16 @@ max tokens、文本历史和图片预算。原始结果写入
 `../../osworld_eval/results/osworld-std/{run_id}`。运行结束后会自动调用
 `scripts/export_results.py`，生成 `results/{config_name}/{run_id}`；如只需要原始结果，
 增加 `--no-export-results`。
+
+当前实验 profile 还会启用 evolving Context Memory。它使用一份与具体 task 无关的
+meta skill。Action model 只负责 GUI action；harness 在有效 action 后使用 bounded
+strict JSON Schema updater 维护 `completed/current_state/facts/failures/next_steps`
+快照。快照只在当前 task 内有效，reset 后清空，不会生成 task-specific Skill。可复制
+profile 并将 `inference.context_memory` 设为 `false` 运行原始 history baseline。
+设计、首轮 V1 诊断和以 binary Acc 为准的 V2 multi_apps 结果分别见
+[`docs/skill-and-context-memory-design.md`](docs/skill-and-context-memory-design.md) 和
+[`docs/20260803-qwen35-9b-context-multiapps.md`](docs/20260803-qwen35-9b-context-multiapps.md)、
+[`docs/20260803-qwen35-context-v2-multiapps-acc.md`](docs/20260803-qwen35-context-v2-multiapps-acc.md)。
 
 正式运行前可以检查最终命令，不会启动评测：
 

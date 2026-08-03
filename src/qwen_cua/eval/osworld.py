@@ -64,10 +64,19 @@ from ..actions import (
     WaitAction,
     action_to_public_dict,
 )
+from ..context import (
+    EvolvingTaskContext,
+    context_update_from_json,
+    has_context_update,
+    strip_context_update,
+)
 from ..protocol import (
     COLLAPSED_SCREENSHOT_TEXT,
     ToolCallParseError,
+    build_context_update_messages,
     build_system_prompt,
+    context_action_repair_instruction,
+    context_response_format,
     parse_tool_calls,
     repair_instruction,
 )
@@ -259,6 +268,9 @@ class QwenCUAAgent:
         surface: str = "browser",
         repair_malformed: bool = True,
         no_tool_call: str = "finish",
+        context_memory: bool = False,
+        context_max_items: int = 8,
+        context_max_chars: int = 6000,
         **kwargs,
     ):
         if surface not in {"browser", "desktop"}:
@@ -276,6 +288,15 @@ class QwenCUAAgent:
         self.surface = surface
         self.repair_malformed = repair_malformed
         self.no_tool_call = no_tool_call
+        self.context_memory_enabled = bool(context_memory)
+        self.task_context = (
+            EvolvingTaskContext(
+                max_items=context_max_items,
+                max_chars=context_max_chars,
+            )
+            if self.context_memory_enabled
+            else None
+        )
 
         # Consumed by the CUA-Gym recorder: this agent decodes grid999 to real
         # pixels itself, so the env must not scale a second time.
@@ -291,10 +312,13 @@ class QwenCUAAgent:
         self.repairs = 0
         self.parse_failures = 0
         self.no_tool_call_finishes = 0
+        self.context_repairs = 0
+        self.context_repair_failures = 0
+        self.context_policy_updates_ignored = 0
 
     # ------------------------------- prompt -------------------------------- #
     def _system_prompt(self) -> str:
-        prompt = build_system_prompt()
+        prompt = build_system_prompt(context_memory=self.context_memory_enabled)
         if self.surface != "desktop":
             return prompt
         for old, new in (
@@ -311,6 +335,8 @@ class QwenCUAAgent:
 
     def _build_messages(self, instruction: str) -> list[dict[str, Any]]:
         """Verbatim port of upstream ``AgentHistory.build_messages``."""
+        if self.task_context is not None:
+            self.task_context.ensure_task(instruction)
         total = len(self.screenshots)
         start = max(0, total - self.history_n)
         collapsed_before = max(0, total - self.image_max)
@@ -322,6 +348,8 @@ class QwenCUAAgent:
             "Previous actions from omitted turns:\n"
             f"{chr(10).join(earlier_actions) if earlier_actions else 'None'}"
         )
+        if self.task_context is not None:
+            prompt += f"\n\n{self.task_context.render_for_prompt()}"
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
@@ -389,7 +417,73 @@ class QwenCUAAgent:
                     logger.warning("[qwencua] repair also malformed: %s", exc2)
                     parsed = []
 
-        self.responses.append(response)
+        if (
+            not parsed
+            and self.task_context is not None
+            and has_context_update(response)
+        ):
+            logger.warning("[qwencua] context-only response, requesting action repair")
+            self.repairs += 1
+            context_response = response
+            repair_messages = [
+                *messages,
+                {"role": "assistant", "content": context_response},
+                {"role": "user", "content": context_action_repair_instruction()},
+            ]
+            repaired_response = self._call_llm(repair_messages, temperature=0.0)
+            try:
+                parsed = parse_tool_calls(repaired_response)
+                response = f"{context_response}\n{repaired_response}"
+            except ToolCallParseError as exc:
+                logger.warning("[qwencua] context action repair malformed: %s", exc)
+                self.parse_failures += 1
+                response = f"{context_response}\n{repaired_response}"
+                parsed = []
+
+        if self.task_context is not None:
+            turn = len(self.responses) + 1
+            if has_context_update(response):
+                self.context_policy_updates_ignored += 1
+                logger.warning(
+                    "[qwencua] ignored context emitted by action policy; using strict updater"
+                )
+
+            # V2: context evolution is harness-owned. The action policy only
+            # chooses a computer action; a strict JSON-schema hop updates memory
+            # without asking the policy to repeat or decorate that action.
+            if parsed:
+                self.context_repairs += 1
+                original_response = strip_context_update(response)
+                try:
+                    structured_context = self._call_llm(
+                        build_context_update_messages(messages, original_response),
+                        temperature=0.0,
+                        max_tokens=self.max_tokens,
+                        response_format=context_response_format(
+                            max_items=self.task_context.max_items,
+                            max_item_chars=self.task_context.max_snapshot_item_chars,
+                        ),
+                    )
+                    context_response = context_update_from_json(structured_context)
+                    candidate = f"{context_response}\n{original_response}"
+                    update = self.task_context.apply_response(candidate, turn=turn)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[qwencua] structured context update failed: %s", exc)
+                    update = None
+                if update is not None and update.applied:
+                    response = candidate
+                    logger.info(
+                        "[qwencua] task context revision=%d via structured side hop",
+                        self.task_context.revision,
+                    )
+                else:
+                    self.context_repair_failures += 1
+
+            self.task_context.record_actions(
+                [action_to_public_dict(a, redact_text=True) for a in parsed]
+            )
+
+        self.responses.append(strip_context_update(response))
         self.action_summaries.append(
             json.dumps(
                 [action_to_public_dict(a) for a in parsed],
@@ -424,8 +518,30 @@ class QwenCUAAgent:
         logger.info("[qwencua] actions=%s tokens=%s", rendered, actions)
         return response, actions
 
+    def export_context(self) -> dict[str, Any] | None:
+        return self.task_context.export() if self.task_context is not None else None
+
+    def export_context_diagnostics(self) -> dict[str, int]:
+        """Return per-task counters for auditing memory protocol compliance."""
+
+        return {
+            "context_repairs": self.context_repairs,
+            "context_repair_failures": self.context_repair_failures,
+            "context_policy_updates_ignored": self.context_policy_updates_ignored,
+            "action_repairs": self.repairs,
+            "parse_failures": self.parse_failures,
+            "no_tool_call_finishes": self.no_tool_call_finishes,
+        }
+
     # ------------------------------- llm call ------------------------------ #
-    def _call_llm(self, messages: list[dict[str, Any]]) -> str:
+    def _call_llm(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> str:
         base_url = os.environ.get("OPENAI_BASE_URL", "http://127.0.0.1:8000/v1")
         api_key = os.environ.get("OPENAI_API_KEY", "EMPTY")
         client = openai.OpenAI(base_url=base_url, api_key=api_key, timeout=600)
@@ -439,11 +555,13 @@ class QwenCUAAgent:
         params: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
+            "max_tokens": self.max_tokens if max_tokens is None else max_tokens,
+            "temperature": self.temperature if temperature is None else temperature,
             "top_p": self.top_p,
             "extra_body": extra_body,
         }
+        if response_format is not None:
+            params["response_format"] = response_format
 
         last_err: Exception | None = None
         for attempt in range(1, MAX_RETRY_TIMES + 1):
@@ -478,3 +596,8 @@ class QwenCUAAgent:
         self.repairs = 0
         self.parse_failures = 0
         self.no_tool_call_finishes = 0
+        self.context_repairs = 0
+        self.context_repair_failures = 0
+        self.context_policy_updates_ignored = 0
+        if self.task_context is not None:
+            self.task_context.reset()

@@ -468,6 +468,9 @@ def build_agent(agent_type: str, args) -> AgentSpec:
                 else 5
             ),
             surface="browser",
+            context_memory=bool(getattr(args, "context_memory", False)),
+            context_max_items=getattr(args, "context_max_items", 8),
+            context_max_chars=getattr(args, "context_max_chars", 6000),
         )
         return AgentSpec(agent, None, lambda lg: agent.reset(lg))
 

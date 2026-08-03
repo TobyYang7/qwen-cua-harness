@@ -1,6 +1,6 @@
 # Qwen-CUA Skill 与主动 Context Memory 设计
 
-- 状态：Proposal
+- 状态：V2 prototype implemented; 9B single-run Acc positive
 - 目标分支：`codex/context-skill-memory`
 - 适用范围：本地 FastAPI/Playwright runner、OSWorld adapter、CUA-Gym adapter
 - 最后更新：2026-08-03
@@ -20,6 +20,46 @@
 - 模型负责语义边界和摘要内容；harness 负责预算监控、强制兜底、持久化、校验和安全边界。不能只依赖模型自觉压缩。
 - 原始 event journal 永不因压缩而删除。压缩只改变下一次推理时组装进 Context 的内容。
 - OSWorld/CUA-Gym 默认使用 run-local memory，禁止跨 benchmark task 检索，避免评测数据泄漏。
+
+### 1.1 当前原型的语义收敛
+
+当前 V2 可评测原型进一步收窄了 Skill 与 Context 的关系：
+
+- **Skill 是 harness-level meta capability**，用于规定模型如何维护工作状态，不为每个
+  benchmark task 创建或选择一份特殊 Skill。
+- **Context 才按 task 演化**。Action policy 只生成 `computer_use`，不承担 memory
+  输出；harness 在有效 action 后调用独立的 context updater。
+- 快照采用 full replacement，而不是无限追加日志；旧快照从 assistant history 中移除，
+  只保留最新语义状态和一段确定性的脱敏动作尾部。
+- instruction 变化或 agent reset 会清空 Context，保证 benchmark task 隔离。
+- Updater 使用 OpenAI-compatible strict JSON Schema，对数组长度和单项字符数
+  设硬边界，再经 Pydantic 校验后写入 full-replacement 快照。这次 internal
+  side-hop 不执行环境动作，也不进入 assistant replay history。
+- Action policy 输出的旧式 `context`/`context_update` 只会被剥离和记录，不能绕过
+  strict updater 写入 memory。快照字符串按不可信数据注入，转义 XML delimiter，且
+  完整 `<task_context>`（包含 recent-action tail）受同一个字符预算约束。
+- 语义快照失败不会阻断 GUI action；确定性的脱敏 recent-action tail 仍会演化。
+- 第一版不实现主动 search/load；只有在实验表明按需召回旧信息有必要时，
+  再加入完整 `context_use` 协议。
+
+原型快照字段为 `status`、`completed`、`current_state`、`facts`、`failures` 和
+`next_steps`。它是 task-local memory，不会自动沉淀或晋升为 Skill。
+
+### 1.2 9B V1/V2 评测结果
+
+以 `result == 1` 作为 binary Acc，Qwen3.5-9B nothink 在 OSWorld `multi_apps`
+93 tasks 上的 baseline 为 17/93 = 18.28%。V1 要求 action 携带 context，
+且使用自由格式 side-hop，Acc 为 16/93 = 17.20%，语义快照覆盖率
+只有 48.83%。V2 将 updater 从 action policy 拆出并改为 bounded strict JSON
+Schema，Acc 为 21/93 = 22.58%，相对 baseline +4 pass / +4.30 pp；3,328
+个有效 action 全部成功更新 context，failure=0。这仍是 temperature 0.6 的
+单次 run，需要多 seed 确认稳定性。
+
+同配置 think 模式的 baseline 为 16/93 = 17.20%，V2 为 20/93 = 21.51%，同样
+增加 4 个 pass / 4.30 pp；1,248 个有效 action 的 updater 全部成功。think 比
+nothink V2 少 1 个 pass。这里所有 fractional reward 都按失败处理，不参与 Acc。
+V1 详情见
+[`20260803-qwen35-9b-context-multiapps.md`](20260803-qwen35-9b-context-multiapps.md)。
 
 ## 2. 背景与现状
 
