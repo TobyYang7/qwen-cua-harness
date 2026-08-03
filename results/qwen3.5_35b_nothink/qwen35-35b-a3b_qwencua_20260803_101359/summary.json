@@ -1,0 +1,81 @@
+{
+  "by_domain": {
+    "chrome": {
+      "count": 46,
+      "mean_score": 0.21739130434782608,
+      "score_sum": 10.0
+    },
+    "gimp": {
+      "count": 26,
+      "mean_score": 0.6923076923076923,
+      "score_sum": 18.0
+    },
+    "libreoffice_calc": {
+      "count": 47,
+      "mean_score": 0.23404255319148937,
+      "score_sum": 11.0
+    },
+    "libreoffice_impress": {
+      "count": 47,
+      "mean_score": 0.4021921113410949,
+      "score_sum": 18.90302923303146
+    },
+    "libreoffice_writer": {
+      "count": 23,
+      "mean_score": 0.3042496288722916,
+      "score_sum": 6.997741464062708
+    },
+    "multi_apps": {
+      "count": 93,
+      "mean_score": 0.20993046860365921,
+      "score_sum": 19.523533580140306
+    },
+    "os": {
+      "count": 24,
+      "mean_score": 0.5416666666666666,
+      "score_sum": 13.0
+    },
+    "thunderbird": {
+      "count": 15,
+      "mean_score": 0.6666666666666666,
+      "score_sum": 10.0
+    },
+    "vlc": {
+      "count": 17,
+      "mean_score": 0.46440796876388574,
+      "score_sum": 7.894935468986057
+    },
+    "vs_code": {
+      "count": 23,
+      "mean_score": 0.6086956521739131,
+      "score_sum": 14.0
+    }
+  },
+  "clean": {
+    "definition": "status == completed; excludes explicitly classified infrastructure/init/timeout failures",
+    "denominator": 310,
+    "mean_score": 0.4171588378910339,
+    "score_sum": 129.31923974622052
+  },
+  "config_name": "qwen3.5_35b_nothink",
+  "expected_tasks": 361,
+  "failure_counts": {
+    "docker_404": 7,
+    "proxy_pool_empty": 44
+  },
+  "official": {
+    "denominator": 361,
+    "mean_score": 0.3582250408482563,
+    "positive_tasks": 130,
+    "score_sum": 129.31923974622052,
+    "zero_tasks": 231
+  },
+  "result_count": 361,
+  "run_id": "qwen35-35b-a3b_qwencua_20260803_101359",
+  "schema_version": 1,
+  "status_counts": {
+    "completed": 310,
+    "infra_failed": 51
+  },
+  "step_count": 8776
+}

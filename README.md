@@ -45,7 +45,7 @@ pip install -e ".[dev]"
 ```bash
 python scripts/deploy_vllm.py \
   configs/models/qwen3.5_9b_nothink.yaml \
-  --vllm-bin /data/toby/vllm-env/bin/vllm \
+  --vllm-bin vllm \
   --dry-run
 ```
 
@@ -54,13 +54,13 @@ python scripts/deploy_vllm.py \
 ```bash
 python scripts/deploy_vllm.py \
   configs/models/qwen3.5_9b_nothink.yaml \
-  --vllm-bin /data/toby/vllm-env/bin/vllm
+  --vllm-bin vllm
 ```
 
 也可以通过 `VLLM_BIN` 指定二进制：
 
 ```bash
-VLLM_BIN=/data/toby/vllm-env/bin/vllm \
+VLLM_BIN=../vllm-env/bin/vllm \
   python scripts/deploy_vllm.py configs/models/qwen3.5_35b_think.yaml
 ```
 
@@ -113,6 +113,102 @@ export OPENAI_API_KEY=EMPTY
 
 OSWorld / CUA-Gym runner 负责 VM 生命周期、截图、动作执行和评分；adapter 只负责消息
 历史、工具协议解析、坐标转换与 malformed-call repair。
+
+## 运行 OSWorld / CUA-Gym Eval
+
+评测入口和 Qwen-CUA runner 已完整放在本仓库中：
+
+```text
+scripts/run_eval.py                 config 驱动的统一入口
+scripts/eval/osworld_runner.py      OSWorld runner
+scripts/eval/cuagym_runner.py       CUA-Gym runner
+scripts/eval/cuagym_adapters.py     CUA-Gym 动作规范化 adapter
+scripts/export_results.py           OSWorld 结构化结果导出
+```
+
+这些脚本不会调用外部仓库中的 `run_scalecua_os.py`、`run_cuagym.py` 或
+`mm_agents/qwencua_agent.py`。Qwen-CUA agent 来自本仓库的
+`qwen_cua.eval.osworld.QwenCUAAgent`。Benchmark 环境本身仍需单独准备：
+
+- OSWorld：`DesktopEnv`、任务 JSON、评估器以及 Docker/VM 运行环境；
+- CUA-Gym：`CUAGymEnv`、task bundles、reward 文件和已启动的 mock websites。
+
+默认假设环境代码位于 `../../osworld_eval`。如果位置不同，通过
+`--eval-root` 指定。先启动与 config 完全一致的 vLLM：
+
+```bash
+python scripts/deploy_vllm.py configs/models/qwen3.5_35b_nothink.yaml
+```
+
+### OSWorld
+
+先用一小部分 task manifest 验证环境。以下命令都从本仓库根目录执行；传入的路径也是
+相对于本仓库根目录：
+
+```bash
+python scripts/run_eval.py \
+  configs/models/qwen3.5_35b_nothink.yaml \
+  --run-id qwen35-nothink-smoke \
+  osworld \
+  --task-manifest ../../osworld_eval/evaluation_examples/test_nogdrive.json \
+  --path-to-vm ../../osworld_eval/docker_vm_data/Ubuntu.qcow2 \
+  --num-workers 1 \
+  --max-steps 3
+```
+
+正式全量评测：
+
+```bash
+python scripts/run_eval.py \
+  configs/models/qwen3.5_35b_nothink.yaml \
+  osworld \
+  --path-to-vm ../../osworld_eval/docker_vm_data/Ubuntu.qcow2 \
+  --num-workers 64
+```
+
+脚本从同一个 YAML 自动传入 served model、thinking、temperature、top-p、top-k、
+max tokens、文本历史和图片预算。原始结果写入
+`../../osworld_eval/results/osworld-std/{run_id}`。运行结束后会自动调用
+`scripts/export_results.py`，生成 `results/{config_name}/{run_id}`；如只需要原始结果，
+增加 `--no-export-results`。
+
+正式运行前可以检查最终命令，不会启动评测：
+
+```bash
+python scripts/run_eval.py \
+  configs/models/qwen3.5_35b_nothink.yaml \
+  --dry-run osworld --num-workers 64
+```
+
+### CUA-Gym
+
+CUA-Gym eval 需要先构建并启动 28 个 mock websites，并生成 app URL 映射。mock 服务的
+部署方式由 CUA-Gym 环境决定；准备完成后，把 task JSONL 和 URL 映射传给本仓库入口：
+
+```bash
+python scripts/run_eval.py \
+  configs/models/qwen3.5_35b_think.yaml \
+  cuagym \
+  --tasks ../../data/val.jsonl \
+  --urls-json ../../cuagym_app_urls.json \
+  --result-dir ../../osworld_eval/results_cuagym/qwen35-think \
+  --num-envs 32 \
+  --max-steps 50
+```
+
+先跑一题 smoke：
+
+```bash
+python scripts/run_eval.py \
+  configs/models/qwen3.5_35b_think.yaml \
+  cuagym \
+  --tasks ../../data/val.jsonl \
+  --urls-json ../../cuagym_app_urls.json \
+  --limit 1 --num-envs 1
+```
+
+CUA-Gym runner 支持断点续跑：目标 task 已存在 `result.json` 时会跳过。不要让不同
+config 复用同一个 `--result-dir`，否则会把旧结果当作已完成任务。
 
 ## 本地交互式 runner
 
