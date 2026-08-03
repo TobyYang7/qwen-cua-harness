@@ -3,14 +3,14 @@ schema_version: 1
 model:
   id: Qwen/Qwen3.5-35B-A3B
   revision: 59d61f3ce65a6d9863b86d2e96597125219dc754
-  served_name: qwen35-35b-a3b
+  served_name: qwen35-35b-a3b-think
 
 inference:
-  enable_thinking: false
+  enable_thinking: true
   temperature: 0.6
   top_p: 0.95
   top_k: 20
-  max_tokens: 2048
+  max_tokens: 8192
   history_n: 50
   image_max: 5
 

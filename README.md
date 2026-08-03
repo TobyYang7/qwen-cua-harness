@@ -1,117 +1,132 @@
 # Qwen-CUA Harness
 
-This repository contains the standalone browser-first reference harness for
-running Qwen-CUA, or a compatible computer-use model, through an
-OpenAI-compatible multimodal endpoint.
+Qwen3.5 computer-use 的独立 harness，包含：
 
-[Upstream project](https://github.com/xlang-ai/Qwen-CUA) ·
-[Technical report](https://github.com/xlang-ai/Qwen-CUA/blob/main/paper/Qwen-CUA.pdf) ·
-[Original demo](https://github.com/xlang-ai/Qwen-CUA/tree/main/demo)
+- 基于截图和 XML `computer_use` 工具调用的 Qwen-CUA agent；
+- 可接入 OSWorld / CUA-Gym 的评测 adapter；
+- 本地 FastAPI + Playwright runner 与 Web 控制台；
+- 由单一 YAML profile 驱动的 vLLM 部署脚本。
 
-> [!NOTE]
-> This is a standalone extraction of the reference demo from
-> [`xlang-ai/Qwen-CUA`](https://github.com/xlang-ai/Qwen-CUA), based on upstream
-> commit [`668fd21`](https://github.com/xlang-ai/Qwen-CUA/commit/668fd213b6d84cab1ad3d2d18cbb1a0f197ce3ad).
-> It contains the harness, operator console, local labs, and tests. It does not
-> include Qwen-CUA model weights, training code, or a hosted inference endpoint.
+本仓库不包含模型权重、训练代码或托管推理服务。
 
-The demo provides:
+## 模型配置
 
-- a Next.js operator console for starting runs and reviewing screenshots,
-  actions, approvals, and replay artifacts;
-- a FastAPI runner that owns model sessions and isolated Playwright browsers;
-- a typed `computer_use` protocol compatible with the XML tool calls used by
-  the Qwen-CUA evaluation harness;
-- two deterministic local labs plus an explicitly acknowledged custom-URL mode;
-- a CLI and Docker Compose setup.
+`configs/models/` 提供四个可直接部署的 profile：
 
-The Python package also includes an unattended OSWorld-style evaluation
-adapter at `qwen_cua.eval.osworld`. It preserves the reference prompt,
-collapsed-screenshot history, execution feedback, malformed-call repair, and
-the normalized `0..999` coordinate contract while compiling actions to the
-`pyautogui` strings and sentinel tokens expected by screenshot benchmark
-runners.
+| Profile | 模型 | Thinking | `max_tokens` |
+|---|---|---:|---:|
+| `qwen3.5_9b_nothink.yaml` | Qwen3.5-9B | 关闭 | 2048 |
+| `qwen3.5_9b_think.yaml` | Qwen3.5-9B | 开启 | 8192 |
+| `qwen3.5_35b_nothink.yaml` | Qwen3.5-35B-A3B | 关闭 | 2048 |
+| `qwen3.5_35b_think.yaml` | Qwen3.5-35B-A3B | 开启 | 8192 |
 
-```python
-from qwen_cua.eval.osworld import QwenCUAAgent
+每个 profile 只保留三类信息：
 
-agent = QwenCUAAgent(
-    model="qwen-cua",
-    surface="desktop",
-    enable_thinking=False,
-    image_max=5,
-)
-response, actions = agent.predict(instruction, {"screenshot": png_bytes})
-```
+- `model`：Hugging Face 模型 ID、固定 revision、served name；
+- `inference`：agent 请求使用的采样、文本历史和图像预算；
+- `serving`：vLLM 启动参数。
 
-This module is intentionally environment-agnostic: OSWorld, CUA-Gym, or a
-similar runner owns VM lifecycle, screenshots, action sanitization, stepping,
-and scoring. The adapter only owns model messages, protocol parsing, action
-compilation, repair, and per-episode history.
+历史 run ID、Slurm job ID、某次补跑并发数等运行记录不属于部署配置，不再放进
+profile。脚本使用严格 schema：缺字段、多字段、类型错误或数值越界时会直接报错，
+避免配置项被静默忽略。vLLM 的图像上限由 `inference.image_max` 派生，不维护重复字段。
 
-> [!CAUTION]
-> Computer use can make mistakes and websites can contain prompt injection.
-> Use fresh browser contexts, avoid authenticated or high-stakes workflows, and
-> review every requested approval.
->
-> The runner is a local development service and has no authentication. Keep it
-> bound to loopback unless you add an authenticated reverse proxy.
+## 部署 vLLM
 
-## Architecture
-
-```text
-Operator Console / CLI
-          |
-          v
-FastAPI Runner -----> OpenAI-compatible Qwen endpoint
-     |                         |
-     |                  XML computer_use
-     v                         |
-Typed Safety Gate <------------+
-     |
-     v
-Isolated Playwright Chromium
-     |
-     +---- screenshots / events / replay
-```
-
-The model never receives a DOM, accessibility tree, terminal, or browser
-automation API. It sees screenshots and emits mouse/keyboard actions on a
-normalized `0..999` coordinate grid. The runner validates those actions and
-executes them through a restricted Playwright adapter.
-
-## Prerequisites
-
-- Python 3.10+
-- Node.js 22+
-- Corepack
-- an OpenAI-compatible endpoint serving Qwen-CUA or a compatible model
-
-## Native quick start
+安装 Python 包：
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-python -m playwright install chromium
+```
 
+先检查将执行的完整命令：
+
+```bash
+python scripts/deploy_vllm.py \
+  configs/models/qwen3.5_9b_nothink.yaml \
+  --vllm-bin /data/toby/vllm-env/bin/vllm \
+  --dry-run
+```
+
+确认后启动服务（去掉 `--dry-run`）：
+
+```bash
+python scripts/deploy_vllm.py \
+  configs/models/qwen3.5_9b_nothink.yaml \
+  --vllm-bin /data/toby/vllm-env/bin/vllm
+```
+
+也可以通过 `VLLM_BIN` 指定二进制：
+
+```bash
+VLLM_BIN=/data/toby/vllm-env/bin/vllm \
+  python scripts/deploy_vllm.py configs/models/qwen3.5_35b_think.yaml
+```
+
+除 vLLM 可执行文件路径外，脚本不接受模型、端口或并行度的命令行覆盖；需要调整时请
+修改或复制 YAML。这样 dry-run、正式部署和后续复现实验使用的是同一份参数。
+
+部署脚本会显式传入所有 `serving` 字段，从 `inference.image_max` 派生服务端图像上限，
+并把 `inference.enable_thinking` 转成：
+
+```text
+--default-chat-template-kwargs '{"enable_thinking":true|false}'
+```
+
+因此 think/nothink 不依赖 vLLM 或模型模板的隐式默认值。Qwen-CUA 的 XML 工具由
+agent 自己解析，不需要 `--enable-auto-tool-choice` 或 `--tool-call-parser`。
+
+> 35B-A3B profile 使用 DP=8、每张 GPU 一份完整模型副本；部署前请确认八张可见 GPU
+> 都有足够显存。端口、DP、上下文长度等资源相关参数都可以在复制出的 profile 中修改。
+
+## 调用参数
+
+服务端的 thinking 默认值由 profile 固定；评测端仍应从同一 profile 读取
+`inference`，并传给 `QwenCUAAgent`：
+
+```python
+from pathlib import Path
+
+from qwen_cua.deploy import load_profile
+from qwen_cua.eval.osworld import QwenCUAAgent
+
+profile = load_profile(Path("configs/models/qwen3.5_9b_nothink.yaml"))
+model = profile["model"]
+inference = profile["inference"]
+
+agent = QwenCUAAgent(
+    model=model["served_name"],
+    **inference,
+    surface="desktop",
+)
+response, actions = agent.predict(instruction, {"screenshot": png_bytes})
+```
+
+vLLM endpoint 使用 OpenAI Chat Completions 协议，默认地址由 profile 的
+`serving.host` / `serving.port` 决定，例如：
+
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:8953/v1
+export OPENAI_API_KEY=EMPTY
+```
+
+OSWorld / CUA-Gym runner 负责 VM 生命周期、截图、动作执行和评分；adapter 只负责消息
+历史、工具协议解析、坐标转换与 malformed-call repair。
+
+## 本地交互式 runner
+
+如需运行浏览器 demo：
+
+```bash
+python -m playwright install chromium
 corepack enable
 corepack prepare pnpm@10.26.0 --activate
 pnpm install
-
 cp .env.example .env
 ```
 
-Edit `.env`:
-
-```dotenv
-QWEN_CUA_BASE_URL=http://127.0.0.1:8000/v1
-QWEN_CUA_API_KEY=dummy
-QWEN_CUA_MODELS=your-model-name
-QWEN_CUA_DEFAULT_MODEL=your-model-name
-```
-
-Start both services:
+在 `.env` 中设置 endpoint、API key 和 served model name，然后启动：
 
 ```bash
 set -a
@@ -120,62 +135,12 @@ set +a
 pnpm dev
 ```
 
-Open <http://127.0.0.1:3000>, select a safe lab, and start a run.
+Web 控制台位于 <http://127.0.0.1:3000>，runner 默认位于
+<http://127.0.0.1:4001>。runner 没有认证，只应绑定 loopback，除非前面已有认证代理。
 
-On Linux, if `qwen-cua doctor` reports missing browser libraries, install them
-once with `sudo python -m playwright install-deps chromium`.
+## 协议与安全
 
-Run the services separately when debugging:
-
-```bash
-qwen-cua serve
-pnpm dev:web
-```
-
-## Docker Compose
-
-Docker runs Chromium headlessly; every captured frame remains visible in the
-operator console.
-
-```bash
-cp .env.example .env
-# Edit the endpoint and model values in .env.
-docker compose up --build
-```
-
-When the model endpoint runs on the Docker host, set
-`QWEN_CUA_BASE_URL=http://host.docker.internal:<port>/v1`. Linux installations
-may need to add an `extra_hosts` mapping for `host.docker.internal`.
-
-## CLI
-
-Check the endpoint and browser installation:
-
-```bash
-qwen-cua doctor
-```
-
-Run a safe lab without the web console:
-
-```bash
-qwen-cua run \
-  --scenario kanban-reprioritize \
-  --prompt "Move the cards to the target state and verify the result."
-```
-
-Run a custom URL:
-
-```bash
-qwen-cua run \
-  --scenario "" \
-  --url https://example.com \
-  --prompt "Describe the page and terminate."
-```
-
-## Model protocol
-
-The system prompt advertises one `computer_use` function. A model action looks
-like this:
+模型只看到截图，通过归一化 `0..999` 坐标输出 XML 工具调用：
 
 ```xml
 <tool_call>
@@ -190,86 +155,22 @@ left_click
 </tool_call>
 ```
 
-Supported actions include clicks, drag, mouse movement, key presses, typing,
-vertical/horizontal scroll, wait, screenshot, `call_user`, and
-`terminate(success|failure)`. Multiple complete tool-call blocks may be
-returned in one model turn.
+支持点击、拖拽、移动、按键、输入、滚动、等待、截图、`call_user` 和
+`terminate(success|failure)`。computer use 可能误操作，网页也可能包含 prompt
+injection；请使用隔离环境，不要直接接入已登录账号或高风险工作流。
 
-## Safety model
-
-- Built-in labs are local, reset in a fresh browser context, and verified
-  against explicit state.
-- Custom URLs require an acknowledgement before the run starts.
-- Non-HTTP(S), credential-bearing, private, loopback, link-local, reserved, and
-  multicast targets are blocked by default.
-- Password entry, file upload, downloads, form submission, and cross-origin
-  navigation pause for operator review.
-- Uploads are selected by the operator and limited to 10 MB by default.
-- API keys and the endpoint URL are runner-only configuration. The browser
-  receives an allowlisted set of model names, never credentials.
-- Raw model responses are local replay data. Type parameters are redacted from
-  UI events to reduce accidental secret exposure.
-
-Custom URL runs are marked `unverified`. A model claiming success is not proof
-that a real-world task succeeded.
-
-## Replay artifacts
-
-Each run is stored under `data/runs/<run-id>/`:
-
-```text
-run.json
-events.jsonl
-replay.json
-screenshots/
-downloads/
-uploads/
-```
-
-The console supports SSE reconnection, screenshot scrubbing, raw response
-inspection, and replay download.
-
-## Configuration
-
-The complete local template is in [`.env.example`](./.env.example). Notable
-settings:
-
-- `QWEN_CUA_MODELS`: comma-separated model allowlist shown in the UI.
-- `QWEN_CUA_ENABLE_THINKING`: model-side thinking toggle when supported.
-- `QWEN_CUA_HISTORY_N`: maximum retained textual turns.
-- `QWEN_CUA_IMAGE_MAX`: recent screenshots retained as images.
-- `QWEN_CUA_ALLOW_PRIVATE_URLS`: opt-in private-network browsing.
-- `QWEN_CUA_MAX_CONCURRENT_RUNS`: local runner concurrency limit.
-
-## Development checks
+## 验证
 
 ```bash
-pnpm generate:api
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-# or all checks:
-pnpm check
+PYTHONPATH=src python -m pytest -q
+ruff check src tests scripts
+python scripts/deploy_vllm.py configs/models/qwen3.5_9b_think.yaml --dry-run
 ```
 
-Live model calls are intentionally not part of the default test suite. Unit and
-integration tests use deterministic fake model responses.
+默认测试不访问真实模型服务。
 
-## Scope and limitations
+## License
 
-- The first release supports Chromium browser workflows, not a full Linux,
-  Windows, or macOS desktop.
-- It supports OpenAI-compatible Chat Completions endpoints, not in-process
-  Transformers inference.
-- File uploads require operator selection; the agent cannot browse arbitrary
-  host files.
-- Browser safety inspection reduces risk but cannot eliminate prompt injection
-  or infer the consequence of every website action.
-
-## Upstream and license
-
-The harness was extracted from the Apache-2.0-licensed
-[`xlang-ai/Qwen-CUA`](https://github.com/xlang-ai/Qwen-CUA) repository. The
-upstream license and notice are preserved in [LICENSE](./LICENSE) and
-[NOTICE](./NOTICE).
+本项目从 Apache-2.0 许可的
+[`xlang-ai/Qwen-CUA`](https://github.com/xlang-ai/Qwen-CUA) 抽取并独立维护；见
+`LICENSE` 与 `NOTICE`。
