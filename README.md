@@ -213,7 +213,7 @@ CUA-Gym runner 支持断点续跑：目标 task 已存在 `result.json` 时会�
 config 复用同一个 `--result-dir`，否则会把旧结果当作已完成任务。
 
 当前评测结果（包括按任务类别统计的准确率）见
-[`osworld_eval/results/README.md`](../../osworld_eval/results/README.md)。
+[`results/README.md`](results/README.md)。
 
 ## 本地交互式 runner
 
