@@ -11,7 +11,7 @@ Qwen3.5 computer-use 的独立 harness，包含：
 
 ## 模型配置
 
-`configs/models/` 提供四个可直接部署的 profile：
+`configs/models/` 提供六个可直接部署的 profile：
 
 | Profile | 模型 | Thinking | `max_tokens` |
 |---|---|---:|---:|
@@ -19,6 +19,8 @@ Qwen3.5 computer-use 的独立 harness，包含：
 | `qwen3.5_9b_think.yaml` | Qwen3.5-9B | 开启 | 8192 |
 | `qwen3.5_35b_nothink.yaml` | Qwen3.5-35B-A3B | 关闭 | 2048 |
 | `qwen3.5_35b_think.yaml` | Qwen3.5-35B-A3B | 开启 | 8192 |
+| `qwen3.5_4b_nothink.yaml` | Qwen3.5-4B | 关闭 | 2048 |
+| `qwen3.5_4b_think.yaml` | Qwen3.5-4B | 开启 | 8192 |
 
 每个 profile 只保留三类信息：
 
@@ -209,6 +211,24 @@ python scripts/run_eval.py \
 
 CUA-Gym runner 支持断点续跑：目标 task 已存在 `result.json` 时会跳过。不要让不同
 config 复用同一个 `--result-dir`，否则会把旧结果当作已完成任务。
+
+## Results
+
+下表汇总当前已经完成的 OSWorld 361 题结果。正确率是所有任务 `score` 的平均值；
+本轮异常任务已经重新评测并合并回原始 result，因此最终表中的四组结果均为
+`361/361 completed`、无剩余基础设施错误。修复任务采用 VM 直连网络以绕过空 proxy
+pool，与正式 proxy 网络条件不完全等价。
+
+| Model | Profile | Thinking | Tasks | Accuracy | Result run |
+|---|---|---:|---:|---:|---|
+| Qwen3.5-35B-A3B | `qwen3.5_35b_nothink.yaml` | off | 361/361 | **41.63%** | `qwen35-35b-a3b_qwencua_20260803_101359` |
+| Qwen3.5-35B-A3B | `qwen3.5_35b_think.yaml` | on | 361/361 | **42.70%** | `qwen35-35b-a3b-think_qwencua_20260803_103643` |
+| Qwen3.5-9B | `qwen3.5_9b_nothink.yaml` | off | 361/361 | **37.29%** | `qwen35-9b_qwencua_20260803_110049` |
+| Qwen3.5-9B | `qwen3.5_9b_think.yaml` | on | 361/361 | **33.11%** | `qwen35-9b-think_qwencua_20260803_115245` |
+
+结构化结果位于 `../../osworld_eval/results/structured/<run-id>/summary.json`；原始
+异常任务的备份位于 `../../osworld_eval/results/repair-backups/`。Qwen3.5-4B 的
+nothink/think 评测当前正在 node05 上各使用 4 张 GPU，完成后再追加到本表。
 
 ## 本地交互式 runner
 
