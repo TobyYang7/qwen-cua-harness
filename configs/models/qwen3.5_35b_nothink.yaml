@@ -1,0 +1,72 @@
+schema_version: 1
+profile: qwen3.5_35b_nothink
+purpose: evaluation_reproduction_manifest
+
+model:
+  hf_id: Qwen/Qwen3.5-35B-A3B
+  revision: 59d61f3ce65a6d9863b86d2e96597125219dc754
+  served_model_name: qwen35-35b-a3b
+  agent_type: qwencua
+
+inference:
+  enable_thinking: false
+  thinking_transport: chat_template_kwargs
+  chat_template_kwargs:
+    enable_thinking: false
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  max_tokens: 2048
+  context_length: 32768
+  reasoning_parser: null
+  history_n: 50
+  image_max: 5
+
+serving:
+  backend: vllm
+  dtype: bfloat16
+  gpu_count: 8
+  tensor_parallel_size: 1
+  data_parallel_size: 8
+  api_server_count: 8
+
+env_concurrency:
+  cua_gym:
+    num_envs: 53
+    browser_pool: 53
+    max_steps: 50
+    episode_timeout_seconds: 2400
+    server_max_num_seqs: 32
+    history_n: 4
+    max_recent_images: 5
+  osworld:
+    full_run_num_workers: 64
+    effective_nothink_retry_num_workers: 11
+    max_steps: 50
+    server_max_num_seqs: 64
+    max_recent_images: 5
+    server_image_limit: 5
+
+evaluated_runs:
+  effective_nothink:
+    osworld_image_5_retry:
+      run_id: qwen35-35b-a3b_qwencua_img5_retry11_20260803_0935
+      job_id: 2687
+      env_concurrency: 11
+  historical_requested_nothink_but_effective_think:
+    cua_gym:
+      run_id: qwen35-35b-a3b_20260803_063929
+      job_id: 2646
+      reason: top_level_enable_thinking_was_ignored_by_vllm_0_24
+    osworld_image_5:
+      run_id: qwen35-35b-a3b_qwencua_20260803_071048
+      job_id: 2661
+      env_concurrency: 64
+      reason: top_level_enable_thinking_was_ignored_by_vllm_0_24
+    osworld_image_10:
+      run_id: qwen35-35b-a3b_qwencua_20260803_082348
+      job_id: 2665
+      env_concurrency: 64
+      image_max: 10
+      server_image_limit: 10
+      reason: process_imported_the_pre_fix_agent
