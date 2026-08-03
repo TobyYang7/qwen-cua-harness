@@ -1,0 +1,28 @@
+schema_version: 1
+
+model:
+  id: Qwen/Qwen3.5-4B
+  revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  served_name: qwen35-4b
+
+inference:
+  enable_thinking: false
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  max_tokens: 2048
+  history_n: 50
+  image_max: 5
+
+serving:
+  host: 127.0.0.1
+  port: 8953
+  dtype: bfloat16
+  tensor_parallel_size: 1
+  data_parallel_size: 4
+  api_server_count: 4
+  max_model_len: 32768
+  max_num_seqs: 64
+  gpu_memory_utilization: 0.9
+  trust_remote_code: true
+  disable_custom_all_reduce: true
