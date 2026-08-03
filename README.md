@@ -25,6 +25,30 @@ The demo provides:
 - two deterministic local labs plus an explicitly acknowledged custom-URL mode;
 - a CLI and Docker Compose setup.
 
+The Python package also includes an unattended OSWorld-style evaluation
+adapter at `qwen_cua.eval.osworld`. It preserves the reference prompt,
+collapsed-screenshot history, execution feedback, malformed-call repair, and
+the normalized `0..999` coordinate contract while compiling actions to the
+`pyautogui` strings and sentinel tokens expected by screenshot benchmark
+runners.
+
+```python
+from qwen_cua.eval.osworld import QwenCUAAgent
+
+agent = QwenCUAAgent(
+    model="qwen-cua",
+    surface="desktop",
+    enable_thinking=False,
+    image_max=5,
+)
+response, actions = agent.predict(instruction, {"screenshot": png_bytes})
+```
+
+This module is intentionally environment-agnostic: OSWorld, CUA-Gym, or a
+similar runner owns VM lifecycle, screenshots, action sanitization, stepping,
+and scoring. The adapter only owns model messages, protocol parsing, action
+compilation, repair, and per-episode history.
+
 > [!CAUTION]
 > Computer use can make mistakes and websites can contain prompt injection.
 > Use fresh browser contexts, avoid authenticated or high-stakes workflows, and
